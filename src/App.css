@@ -1,0 +1,92 @@
+.app-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.background-effects {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.gradient-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.3;
+  animation: float 20s ease-in-out infinite;
+}
+
+.orb-1 {
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, var(--color-primary) 0%, transparent 70%);
+  top: -200px;
+  left: -200px;
+  animation-delay: 0s;
+}
+
+.orb-2 {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, var(--color-secondary) 0%, transparent 70%);
+  bottom: -150px;
+  right: -150px;
+  animation-delay: -7s;
+}
+
+.orb-3 {
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, var(--color-accent) 0%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  animation-delay: -14s;
+}
+
+.grid-pattern {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+.main-content {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.content-area {
+  flex: 1;
+  display: flex;
+  gap: 1px;
+  background: var(--color-border-light);
+  overflow: hidden;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(20px, -20px) scale(1.05);
+  }
+  50% {
+    transform: translate(-10px, 10px) scale(0.95);
+  }
+  75% {
+    transform: translate(15px, 15px) scale(1.02);
+  }
+}
