@@ -68,7 +68,7 @@ export class AIService {
       body: JSON.stringify({
         model,
         messages: [
-          { role: 'system', content: 'You are a helpful assistant that analyzes text and extracts structured information. Always respond with valid JSON only, no markdown code blocks.' },
+          { role: 'system', content: '你是一个知识图谱助手，负责分析文本并生成结构化信息。只返回有效的JSON，不要markdown代码块，不要任何解释文字。' },
           { role: 'user', content: prompt },
         ],
         temperature,
@@ -87,23 +87,51 @@ export class AIService {
   }
 
   async parseText(text: string): Promise<AIParsedResult> {
-    const prompt = `分析以下文本，提取其中的实体、概念和它们之间的关系。
+    const prompt = `你是一个知识图谱生成器。根据用户输入的主题或文本，生成一个全面、丰富的知识图谱，将其扩展为结构化的可视化展示。
+
+你的任务是扩展和生成相关的概念、组件、子主题及其关系，而不仅仅是字面提取。
 
 要求：
-1. 只提取文本中明确写出的关系、实体和属性，不要进行深层推断
-2. 以JSON格式返回结果
-3. JSON格式如下：
+1. 至少生成 8-15 个节点，覆盖主题的不同方面
+2. 至少生成 7-12 条有意义的关系（边）
+3. 适当将相关节点分组为模块
+4. 为节点分配类型："entity"（实体-具体事物）、"concept"（概念-抽象想法）、"module"（模块-分组）、"atomic"（原子-细节字段）
+5. 根据内容结构选择最合适的视图
+
+节点类型说明：
+- "entity"：具体的对象、工具、人员、系统
+- "concept"：抽象的想法、原则、方法论
+- "module"：主要类别或分组
+- "atomic"：具体的细节、属性、字段
+
+视图选择规则：
+- "tree"：有清晰层级结构（父子关系、分类→子分类）
+- "network"：实体之间的相互关联关系
+- "kanban"：具有不同状态/类别/阶段的条目
+- "knowledge"：有模块边界的分组集群
+- "architecture"：分层系统或流程
+- "breakdown"：单一复杂事物的详细拆解
+
+只返回有效的JSON（不要markdown代码块，不要解释文字）：
 {
-  "nodes": [{"label": "名称", "type": "entity|concept|module|atomic", "description": "描述"}],
-  "edges": [{"source": "源节点label", "target": "目标节点label", "label": "关系描述"}],
-  "modules": [{"label": "模块名", "nodeLabels": ["节点label1", "节点label2"]}],
-  "recommendedView": "tree|network|kanban|knowledge|architecture|breakdown"
+  "nodes": [
+    {"label": "节点名称", "type": "entity", "description": "简要描述"}
+  ],
+  "edges": [
+    {"source": "源节点名称", "target": "目标节点名称", "label": "关系类型"}
+  ],
+  "modules": [
+    {"label": "模块名称", "nodeLabels": ["节点1", "节点2"]}
+  ],
+  "recommendedView": "tree"
 }
 
-文本内容：
+重要：边的source/target必须与节点label完全匹配。生成丰富、互联的图。
+
+用户输入：
 ${text}
 
-请直接返回JSON，不要有其他内容。`;
+现在生成知识图谱JSON：`;
 
     try {
       const response = await this.callAI(prompt);
@@ -111,7 +139,7 @@ ${text}
       const parsed = JSON.parse(jsonStr);
       return this.convertToResult(parsed);
     } catch (error) {
-      console.error('AI parsing error:', error);
+      console.error('AI解析错误:', error);
       return this.fallbackParse(text);
     }
   }
@@ -124,26 +152,129 @@ ${text}
       return `${source?.label} -> ${e.label} -> ${target?.label}`;
     }).join(', ');
 
-    const prompt = `当前思维导图状态：
-节点：${nodesContext || '无'}
-关系：${edgesContext || '无'}
+    const isDelete = command.includes('删除') || command.includes('移除') || command.includes('去掉') || command.includes('delete');
+    const isAdd = command.includes('添加') || command.includes('新增') || command.includes('增加') || command.includes('加入');
+    const isExpand = command.includes('展开') || command.includes('扩展') || command.includes('细化') || command.includes('详细') || command.includes('深入');
+    const isRename = command.includes('重命名') || command.includes('改名') || command.includes('改名为') || command.includes('修改名称');
+    const isModify = command.includes('修改') || command.includes('更改') || command.includes('编辑');
+    const isConnect = command.includes('连接') || command.includes('关联') || command.includes('建立关系');
 
-用户指令：${command}
+    // 删除操作：本地直接处理，避免AI延迟
+    if (isDelete) {
+      const targetNodes = currentNodes.filter(n => command.includes(n.label));
+      if (targetNodes.length > 0) {
+        return {
+          nodes: targetNodes.map(targetNode => ({
+            id: `delete-${targetNode.id}`,
+            type: 'atomic' as const,
+            label: `delete:${targetNode.id}`,
+            properties: {},
+            position: { x: 0, y: 0 },
+            children: [],
+            connections: [],
+            metadata: { createdAt: Date.now(), updatedAt: Date.now(), tags: [], importance: 0 },
+          })),
+          edges: [],
+          modules: [],
+          recommendedView: '',
+          confidence: 0.9,
+          warnings: [`已删除 ${targetNodes.length} 个节点`],
+        };
+      }
+    }
 
-请根据指令返回JSON格式的修改操作：
-- 如果是添加节点/关系：返回新的nodes和edges
-- 如果是删除：返回需要删除的节点id（在label字段中用"delete:节点id"格式）
-- 如果是修改：返回更新后的节点信息
+    // 重命名操作：本地直接处理
+    if (isRename) {
+      const targetNode = currentNodes.find(n => command.includes(n.label));
+      if (targetNode) {
+        // 尝试从命令中提取新名称："把X重命名为Y"、"将X改名为Y"、"X重命名为Y"
+        const patterns = [
+          /(?:把|将)?(.+?)(?:重命名|改名|修改名称)(?:为|成)「?(.+?)」?$/,
+          /(?:把|将)?(.+?)(?:重命名|改名|修改名称)(?:为|成)(.+)$/,
+        ];
+        let newName: string | null = null;
+        for (const pattern of patterns) {
+          const match = command.match(pattern);
+          if (match && match[2]) {
+            newName = match[2].trim();
+            break;
+          }
+        }
+        if (newName) {
+          return {
+            nodes: [{
+              id: targetNode.id,
+              type: targetNode.type,
+              label: newName,
+              properties: {},
+              position: { x: 0, y: 0 },
+              children: [],
+              connections: [],
+              metadata: { createdAt: Date.now(), updatedAt: Date.now(), tags: [], importance: 5 },
+            }],
+            edges: [],
+            modules: [],
+            recommendedView: '',
+            confidence: 0.9,
+            warnings: [`已将「${targetNode.label}」重命名为「${newName}」`],
+          };
+        }
+      }
+    }
 
-JSON格式：
+    // 添加/扩展/修改/连接操作：交给AI生成新内容
+    const taskHint = isExpand || isAdd
+      ? '扩展主题，生成相关的子概念、组件和细节（目标5-10个新节点及其关系）'
+      : isConnect
+      ? '根据指令建立节点之间的连接关系'
+      : isModify
+      ? '根据指令修改现有节点的属性或生成新的相关内容'
+      : '根据指令应用到当前图谱';
+
+    const prompt = `你是一个知识图谱助手。用户希望在现有的思维导图基础上进行修改、扩展或删除操作。
+
+【当前状态】
+节点列表: ${nodesContext || '无'}
+关系列表: ${edgesContext || '无'}
+
+【用户指令】
+${command}
+
+【任务】
+${taskHint}。
+
+【操作类型识别】
+- 添加/扩展：生成与现有内容相关的新节点和关系
+- 修改：更新现有节点的描述、类型等属性（label可与现有节点匹配，作为更新）
+- 连接：在现有节点之间或新节点与现有节点之间建立关系
+- 删除：通过 label 设置为 "delete:现有节点label" 来标记删除
+
+【节点类型说明】
+- "entity"：具体的对象、工具、人员、系统
+- "concept"：抽象的想法、原则、方法论
+- "module"：主要类别或分组
+- "atomic"：具体的细节、属性、字段
+
+只返回有效的JSON（不要markdown代码块，不要解释文字）：
 {
-  "nodes": [{"id": "可选", "label": "名称", "type": "entity|concept|module|atomic", "description": "描述"}],
-  "edges": [{"source": "源节点label或id", "target": "目标节点label或id", "label": "关系描述"}],
+  "nodes": [
+    {"label": "节点名称", "type": "entity", "description": "简要描述"}
+  ],
+  "edges": [
+    {"source": "现有或新节点的label", "target": "新节点的label", "label": "关系类型"}
+  ],
   "modules": [],
   "recommendedView": ""
 }
 
-请直接返回JSON。`;
+【重要规则】
+1. 边的 source 可以是现有节点的 label，用于将新节点连接到当前图谱
+2. 如果要删除节点，将该节点的 label 设为 "delete:要删除的节点label"
+3. 如果要重命名节点，使用现有节点 label 作为新节点的 label 字段，并更新其他属性
+4. 生成丰富、互联的内容，不要只生成孤立节点
+5. 只返回JSON
+
+现在生成JSON：`;
 
     try {
       const response = await this.callAI(prompt);
@@ -157,11 +288,16 @@ JSON格式：
   }
 
   private extractJSON(text: string): string {
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    let cleaned = text.trim();
+    const codeBlockMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      cleaned = codeBlockMatch[1].trim();
+    }
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
       return jsonMatch[0];
     }
-    throw new Error('No JSON found in response');
+    throw new Error('No JSON found in response: ' + text.substring(0, 200));
   }
 
   private convertToResult(parsed: any, existingNodes?: Node[]): AIParsedResult {
@@ -170,10 +306,12 @@ JSON格式：
     const modules: Module[] = [];
 
     const nodeIdMap = new Map<string, string>();
+    const normalizedLabelMap = new Map<string, string>();
 
-    if (parsed.nodes) {
+    if (parsed.nodes && Array.isArray(parsed.nodes)) {
       parsed.nodes.forEach((n: any) => {
-        if (n.label && n.label.startsWith('delete:')) {
+        if (!n || !n.label) return;
+        if (n.label.startsWith('delete:')) {
           const deleteId = n.label.replace('delete:', '');
           nodes.push({
             id: `delete-${deleteId}`,
@@ -189,11 +327,15 @@ JSON格式：
         }
 
         const id = n.id || uuidv4();
-        nodeIdMap.set(n.label, id);
+        const normalized = String(n.label).trim().toLowerCase();
+        nodeIdMap.set(String(n.label), id);
+        nodeIdMap.set(normalized, id);
+        normalizedLabelMap.set(normalized, String(n.label));
+
         nodes.push({
           id,
           type: n.type || 'entity',
-          label: n.label || 'Unnamed',
+          label: String(n.label),
           description: n.description || '',
           properties: n.properties || {},
           position: { x: 100 + Math.random() * 600, y: 100 + Math.random() * 400 },
@@ -209,41 +351,66 @@ JSON格式：
       });
     }
 
-    if (parsed.edges) {
+    const resolveNodeId = (label: string): string | null => {
+      if (!label) return null;
+      const direct = nodeIdMap.get(String(label));
+      if (direct) return direct;
+      const normalized = nodeIdMap.get(String(label).trim().toLowerCase());
+      if (normalized) return normalized;
+      if (existingNodes) {
+        const existing = existingNodes.find(n =>
+          n.label === label || n.id === label ||
+          n.label.toLowerCase() === String(label).trim().toLowerCase()
+        );
+        if (existing) return existing.id;
+      }
+      return null;
+    };
+
+    if (parsed.edges && Array.isArray(parsed.edges)) {
       parsed.edges.forEach((e: any) => {
-        let sourceId = nodeIdMap.get(e.source) || e.source;
-        let targetId = nodeIdMap.get(e.target) || e.target;
+        if (!e || (!e.source && !e.from) || (!e.target && !e.to)) return;
+        const sourceLabel = e.source || e.from;
+        const targetLabel = e.target || e.to;
+        const sourceId = resolveNodeId(sourceLabel);
+        const targetId = resolveNodeId(targetLabel);
 
-        if (existingNodes) {
-          const existingSource = existingNodes.find(n => n.label === e.source || n.id === e.source);
-          const existingTarget = existingNodes.find(n => n.label === e.target || n.id === e.target);
-          if (existingSource) sourceId = existingSource.id;
-          if (existingTarget) targetId = existingTarget.id;
+        if (sourceId && targetId && sourceId !== targetId) {
+          const exists = edges.find(ed =>
+            ed.source === sourceId && ed.target === targetId
+          );
+          if (!exists) {
+            edges.push({
+              id: uuidv4(),
+              source: sourceId,
+              target: targetId,
+              type: e.type || 'relation',
+              label: e.label || '关联',
+              properties: e.properties || {},
+              metadata: { createdAt: Date.now(), strength: e.strength || 1 },
+            });
+          }
         }
-
-        edges.push({
-          id: uuidv4(),
-          source: sourceId,
-          target: targetId,
-          type: e.type || 'relation',
-          label: e.label || '关联',
-          properties: e.properties || {},
-          metadata: { createdAt: Date.now(), strength: e.strength || 1 },
-        });
       });
     }
 
-    if (parsed.modules) {
+    if (parsed.modules && Array.isArray(parsed.modules)) {
       parsed.modules.forEach((m: any) => {
-        const nodeIds = (m.nodeLabels || []).map((label: string) => nodeIdMap.get(label) || label);
-        modules.push({
-          id: uuidv4(),
-          label: m.label || 'Module',
-          description: m.description || '',
-          nodeIds,
-          color: `rgba(${Math.floor(Math.random() * 200 + 55)}, ${Math.floor(Math.random() * 200 + 55)}, ${Math.floor(Math.random() * 200 + 55)}, 0.2)`,
-          bounds: { x: 50, y: 50, width: 400, height: 300 },
-        });
+        if (!m || !m.label) return;
+        const nodeIds = (m.nodeLabels || m.nodes || []).map((label: string) => {
+          return resolveNodeId(label);
+        }).filter((id: string | null): id is string => id !== null);
+
+        if (nodeIds.length > 0) {
+          modules.push({
+            id: uuidv4(),
+            label: String(m.label),
+            description: m.description || '',
+            nodeIds,
+            color: `hsla(${Math.floor(Math.random() * 360)}, 70%, 60%, 0.15)`,
+            bounds: { x: 50, y: 50, width: 400, height: 300 },
+          });
+        }
       });
     }
 
@@ -251,7 +418,7 @@ JSON格式：
       nodes,
       edges,
       modules,
-      recommendedView: parsed.recommendedView || 'tree',
+      recommendedView: parsed.recommendedView || 'network',
       confidence: 0.85,
       warnings: [],
     };
@@ -276,16 +443,44 @@ JSON格式：
       });
     });
 
+    const sentences = text.split(/[。.！!？?；;\n]/).filter(s => s.trim().length > 5);
+    sentences.forEach(sentence => {
+      const nodesInSentence = nodes.filter(n => sentence.includes(n.label));
+      for (let i = 0; i < nodesInSentence.length - 1; i++) {
+        const exists = edges.find(e =>
+          (e.source === nodesInSentence[i].id && e.target === nodesInSentence[i + 1].id) ||
+          (e.source === nodesInSentence[i + 1].id && e.target === nodesInSentence[i].id)
+        );
+        if (!exists) {
+          edges.push({
+            id: uuidv4(),
+            source: nodesInSentence[i].id,
+            target: nodesInSentence[i + 1].id,
+            type: 'relation',
+            label: '关联',
+            properties: {},
+            metadata: { createdAt: Date.now(), strength: 0.5 },
+          });
+        }
+      }
+    });
+
     for (let i = 0; i < nodes.length - 1; i++) {
-      edges.push({
-        id: uuidv4(),
-        source: nodes[i].id,
-        target: nodes[i + 1].id,
-        type: 'sequence',
-        label: '顺序',
-        properties: {},
-        metadata: { createdAt: Date.now(), strength: 0.5 },
-      });
+      const exists = edges.find(e =>
+        (e.source === nodes[i].id && e.target === nodes[i + 1].id) ||
+        (e.source === nodes[i + 1].id && e.target === nodes[i].id)
+      );
+      if (!exists) {
+        edges.push({
+          id: uuidv4(),
+          source: nodes[i].id,
+          target: nodes[i + 1].id,
+          type: 'sequence',
+          label: '顺序',
+          properties: {},
+          metadata: { createdAt: Date.now(), strength: 0.3 },
+        });
+      }
     }
 
     return {

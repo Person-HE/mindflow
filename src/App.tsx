@@ -63,12 +63,19 @@ function App() {
       const project = state.currentProject!;
 
       let result: AIParsedResult;
-      const isCommand = content.startsWith('/') ||
-        content.includes('添加') || content.includes('删除') ||
-        content.includes('连接') || content.includes('分组') ||
-        content.includes('修改') || content.includes('重命名');
+      // 命令关键词识别
+      const isDelete = content.includes('删除') || content.includes('移除') || content.includes('去掉');
+      const isRename = content.includes('重命名') || content.includes('改名');
+      const isModify = content.includes('修改') || content.includes('更改') || content.includes('编辑');
+      const isAdd = content.includes('添加') || content.includes('新增') || content.includes('增加') || content.includes('加入');
+      const isExpand = content.includes('展开') || content.includes('扩展') || content.includes('细化') || content.includes('详细') || content.includes('深入');
+      const isConnect = content.includes('连接') || content.includes('关联') || content.includes('建立关系');
+      const hasExistingNodes = project.nodes.length > 0;
+      const isCommandOp = isDelete || isRename || isModify || isAdd || isExpand || isConnect;
 
-      if (isCommand && project.nodes.length > 0) {
+      // 已有图谱 + 命令操作 → 走 processCommand 进行增量修改
+      // 无图谱 或 非命令式描述 → 走 parseText 全新生成
+      if (hasExistingNodes && isCommandOp) {
         result = await aiService.processCommand(content, project.nodes, project.edges);
       } else {
         result = await aiService.parseText(content);

@@ -252,27 +252,88 @@ export const useMindFlowStore = create<MindFlowState>((set, get) => ({
   setIsProcessing: (processing) => set({ isProcessing: processing }),
 
   processAIResponse: (result) => {
-    const { currentProject } = get();
+    const { currentProject, takeSnapshot } = get();
     if (!currentProject) return;
+    takeSnapshot();
+
+    let newNodes = [...currentProject.nodes];
+    let newEdges = [...currentProject.edges];
+    const newModules = [...currentProject.modules];
+
+    const deleteKeys: string[] = [];
+    const addNodes: Node[] = [];
+
     result.nodes.forEach(node => {
-      if (!currentProject.nodes.find(n => n.id === node.id)) {
-        currentProject.nodes.push(node);
+      if (node.label.startsWith('delete:')) {
+        const deleteKey = node.label.replace('delete:', '').trim();
+        deleteKeys.push(deleteKey);
+      } else {
+        addNodes.push(node);
       }
     });
+
+    // 删除：同时支持通过 id 或 label 删除
+    if (deleteKeys.length > 0) {
+      const normalizedDeleteKeys = deleteKeys.map(k => k.toLowerCase());
+      newNodes = newNodes.filter(n =>
+        !deleteKeys.includes(n.id) &&
+        !normalizedDeleteKeys.includes(n.label.toLowerCase())
+      );
+      // 同时清理被删除节点的边
+      const remainingIds = new Set(newNodes.map(n => n.id));
+      newEdges = newEdges.filter(e => remainingIds.has(e.source) && remainingIds.has(e.target));
+    }
+
+    addNodes.forEach(node => {
+      const existingIndex = newNodes.findIndex(n => n.id === node.id);
+      if (existingIndex >= 0) {
+        // 更新现有节点：合并字段，保留本地位置等状态
+        const existing = newNodes[existingIndex];
+        const isPlaceholderPos = node.position.x === 0 && node.position.y === 0;
+        const hasProps = node.properties && Object.keys(node.properties).length > 0;
+        newNodes[existingIndex] = {
+          ...existing,
+          ...node,
+          // 保留本地的位置（除非AI明确指定了非0,0位置）
+          position: isPlaceholderPos ? existing.position : node.position,
+          // 合并属性
+          properties: hasProps ? { ...existing.properties, ...node.properties } : existing.properties,
+          // 保留连接关系
+          connections: existing.connections,
+          children: existing.children,
+          // 更新元数据
+          metadata: { ...existing.metadata, ...node.metadata, updatedAt: Date.now() },
+        };
+      } else {
+        // 检查 label 是否已存在（避免重复添加）
+        const labelExists = newNodes.find(n => n.label.toLowerCase() === node.label.toLowerCase());
+        if (!labelExists) {
+          newNodes.push(node);
+        }
+      }
+    });
+
     result.edges.forEach(edge => {
-      if (!currentProject.edges.find(e => e.id === edge.id)) {
-        currentProject.edges.push(edge);
+      const exists = newEdges.find(e =>
+        (e.source === edge.source && e.target === edge.target) ||
+        e.id === edge.id
+      );
+      if (!exists) {
+        newEdges.push(edge);
       }
     });
+
     result.modules.forEach(module => {
-      if (!currentProject.modules.find(m => m.id === module.id)) {
-        currentProject.modules.push(module);
+      const exists = newModules.find(m => m.id === module.id);
+      if (!exists) {
+        newModules.push(module);
       }
     });
+
     if (result.recommendedView) {
       set({ activeView: result.recommendedView as ViewType });
     }
-    set({ currentProject: { ...currentProject, updatedAt: Date.now() } });
+    set({ currentProject: { ...currentProject, nodes: newNodes, edges: newEdges, modules: newModules, updatedAt: Date.now() } });
   },
 
   selectNode: (id) => set({ selectedNodeId: id, showNodeDetail: id !== null }),
